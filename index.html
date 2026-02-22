@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sage 关键词工具 - Amazon Search Terms Processor</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React, ReactDOM, and Babel CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        ::selection { background: #4f46e5; color: white; }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.2); border-radius: 10px; }
+        .shadow-inner-soft { box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.05); }
+        .animate-spin-slow { animation: spin 12s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        // 简易图标组件包装器 (使用 Lucide SVG)
+        const Icon = ({ name, size = 20, className = "" }) => {
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            }, [name]);
+            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+        };
+
+        const App = () => {
+            const [rawInput, setRawInput] = useState('');
+            const [productTitle, setProductTitle] = useState('');
+            const [category, setCategory] = useState('');
+            const [excludeWords, setExcludeWords] = useState(
+                'Style, Stylish, Fashion, Branding, Quality, Professional, Cheap, Unisex, Creative, Elegant, Classic, Trendy, Modern, Perfect, Custom, Customizable, Customized Logo, Promotional, Personalization, Giveaway, Advertising, Gift, Multi-Color print, Full Color Print, Digital Printing, Room, BBQ, rush service, Accessory, Corporate'
+            );
+            // 更新：根据用户需求调整默认中性填充词
+            const [neutralWords, setNeutralWords] = useState(
+                'Sample, Piece, Business, Use, Bulk, Pack, Imprinted, Embroidery, Ready, Commercial, Grade, Eco, Friendly, Recycled, Material, Employee, Appreciation, Client, Retention, Trade, Show, Conference, Event'
+            );
+
+            const [results, setResults] = useState('');
+            const [copyStatus, setCopyStatus] = useState(false);
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [hasGenerated, setHasGenerated] = useState(false);
+
+            const toSingular = (word) => {
+                if (!word || word.length <= 3) return word;
+                let s = word.toLowerCase();
+                if (s.endsWith('yes') || s.endsWith('less') || s.endsWith('ness')) return s;
+                if (s.endsWith('ies')) return s.slice(0, -3) + 'y';
+                if (s.endsWith('es')) {
+                    if (/(s|x|ch|sh)es$/.test(s)) return s.slice(0, -2);
+                    return s.slice(0, -1);
+                }
+                if (s.endsWith('s') && !s.endsWith('ss')) return s.slice(0, -1);
+                return s;
+            };
+
+            const capitalize = (str) => {
+                return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+            };
+
+            const processKeywords = () => {
+                if (!rawInput.trim()) {
+                    setResults('');
+                    setHasGenerated(false);
+                    return;
+                }
+
+                setIsProcessing(true);
+                setHasGenerated(false);
+
+                setTimeout(() => {
+                    const cleanInputWords = (text) => text.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 0);
+                    
+                    // 1. 准备违禁词库
+                    const forbiddenEntries = excludeWords.toLowerCase().split(/[,，\n]+/).map(w => w.trim()).filter(w => w);
+                    const forbiddenFullSet = new Set();
+                    forbiddenEntries.forEach(entry => {
+                        forbiddenFullSet.add(entry);
+                        entry.split(/[^a-z0-9]+/).forEach(p => {
+                            if(p.length > 1) {
+                                forbiddenFullSet.add(p);
+                                forbiddenFullSet.add(toSingular(p));
+                            }
+                        });
+                    });
+
+                    // 2. 准备排除词库 (标题 & 类目)
+                    const titleWords = new Set(cleanInputWords(productTitle).map(toSingular));
+                    const categoryWords = new Set(cleanInputWords(category).map(toSingular));
+                    const baseExcludes = new Set(['and', 'or', 'for', 'with', 'the', 'a', 'an']);
+
+                    const usedWords = new Set();
+
+                    // 定义单词有效性检测函数
+                    const isValid = (word) => {
+                        const singular = toSingular(word);
+                        if (forbiddenFullSet.has(word) || forbiddenFullSet.has(singular)) return false;
+                        if (titleWords.has(singular) || titleWords.has(word)) return false;
+                        if (categoryWords.has(singular) || categoryWords.has(word)) return false;
+                        if (baseExcludes.has(word)) return false;
+                        if (usedWords.has(singular)) return false;
+                        return true;
+                    };
+
+                    // 3. 提取第一优先级：反查关键词
+                    const allWordsInInput = rawInput.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+                    const highPriorityWords = [];
+                    for (const word of allWordsInInput) {
+                        if (isValid(word)) {
+                            const singular = toSingular(word);
+                            highPriorityWords.push(singular);
+                            usedWords.add(singular);
+                        }
+                    }
+
+                    // 4. 提取第二优先级：通用中性词
+                    const neutralWordList = neutralWords.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+                    const supplementWords = [];
+                    for (const word of neutralWordList) {
+                        if (isValid(word)) {
+                            const singular = toSingular(word);
+                            supplementWords.push(singular);
+                            usedWords.add(singular);
+                        }
+                    }
+
+                    // 5. 合并并按顺序填充
+                    const finalPhrases = [];
+                    let currentTotalLength = 0;
+                    const combinedStream = [...highPriorityWords, ...supplementWords];
+
+                    for (let i = 0; i < combinedStream.length; i++) {
+                        const formattedWord = capitalize(combinedStream[i]);
+                        const separator = finalPhrases.length > 0 ? ', ' : '';
+                        const potentialNewLength = currentTotalLength + separator.length + formattedWord.length;
+
+                        if (potentialNewLength <= 200) {
+                            finalPhrases.push(formattedWord);
+                            currentTotalLength = potentialNewLength;
+                        }
+                    }
+
+                    setResults(finalPhrases.join(', '));
+                    setIsProcessing(false);
+                    setHasGenerated(true);
+                }, 400);
+            };
+
+            const handleCopy = () => {
+                const textArea = document.createElement("textarea");
+                textArea.value = results;
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    setCopyStatus(true);
+                    setTimeout(() => setCopyStatus(false), 2000);
+                } catch (err) {}
+                document.body.removeChild(textArea);
+            };
+
+            return (
+                <div className="h-screen bg-slate-50 flex flex-col font-sans text-slate-900 overflow-hidden text-left text-left">
+                    <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm shrink-0 z-10">
+                        <div className="flex items-center gap-3 text-left">
+                            <div className="bg-indigo-600 p-2 rounded-xl shadow-lg shadow-indigo-200">
+                                <Icon name="layers" size={24} className="text-white" />
+                            </div>
+                            <div className="text-left">
+                                <h1 className="text-xl font-black text-slate-800 leading-tight tracking-tight">Sage 关键词工具</h1>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest text-left">Premium Search Terms Processor</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-4 text-xs font-bold text-slate-600 bg-slate-100 px-4 py-2 rounded-full border border-slate-200">
+                            <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></div>
+                            200 字符填充模式
+                        </div>
+                    </header>
+
+                    <main className="flex-1 flex p-6 gap-6 min-h-0 max-w-[1800px] mx-auto w-full overflow-hidden text-left">
+                        <section className="w-1/2 h-full flex flex-col">
+                            <div className="bg-white rounded-[2rem] border border-slate-200 shadow-xl p-8 flex flex-col h-full overflow-hidden relative text-left">
+                                <div className="flex items-center justify-between mb-4 shrink-0 text-left">
+                                    <div className="flex items-center gap-2">
+                                        <Icon name="edit-3" size={20} className="text-indigo-600" />
+                                        <h2 className="font-bold text-slate-800 text-lg">输入数据配置</h2>
+                                    </div>
+                                    <button 
+                                        onClick={processKeywords}
+                                        disabled={!rawInput.trim() || isProcessing}
+                                        className={`px-6 py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all transform active:scale-95 shadow-md ${
+                                            isProcessing 
+                                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed' 
+                                            : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200'
+                                        }`}
+                                    >
+                                        {isProcessing ? <Icon name="refresh-cw" size={16} className="animate-spin" /> : <Icon name="play-circle" size={16} />}
+                                        {isProcessing ? '处理中' : '开始生成'}
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-5 mb-4 shrink-0 text-left">
+                                    <div className="space-y-2 text-left text-left">
+                                        <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1 text-left">产品标题 (排除词)</label>
+                                        <input 
+                                            type="text"
+                                            className="w-full p-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm shadow-inner transition-all"
+                                            placeholder="自动排重标题词"
+                                            value={productTitle}
+                                            onChange={(e) => setProductTitle(e.target.value)}
+                                        />
+                                    </div>
+                                    <div className="space-y-2 text-left text-left text-left">
+                                        <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1 text-left">类目名称 (排除词)</label>
+                                        <input 
+                                            type="text"
+                                            className="w-full p-3 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none text-sm shadow-inner transition-all"
+                                            placeholder="自动排重类目词"
+                                            value={category}
+                                            onChange={(e) => setCategory(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 flex flex-col gap-2 min-h-0 mb-4 relative group text-left">
+                                    <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1 text-left">反查关键词列表 (主源)</label>
+                                    <textarea
+                                        className="w-full flex-1 p-5 bg-slate-50 border border-slate-100 rounded-[1.5rem] focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm leading-relaxed resize-none shadow-inner overflow-y-auto pb-10"
+                                        placeholder="粘贴反查数据，权重最高..."
+                                        value={rawInput}
+                                        onChange={(e) => setRawInput(e.target.value)}
+                                    />
+                                    <div className="absolute bottom-4 right-4 pointer-events-none">
+                                        <div className="px-3 py-1 rounded-lg bg-slate-200/80 backdrop-blur-sm border border-slate-300 text-[10px] font-bold text-slate-500 shadow-sm uppercase tracking-tighter">
+                                            输入长度: {rawInput.length}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-5 shrink-0 text-left">
+                                    <div className="space-y-2 text-left text-left">
+                                        <label className="text-[11px] font-black text-indigo-400 uppercase tracking-wider ml-1 text-left flex items-center gap-1">
+                                            <Icon name="plus-circle" size={10} /> 填充用中性词
+                                        </label>
+                                        <textarea
+                                            className="w-full h-24 p-3 bg-indigo-50/30 border border-indigo-100 rounded-2xl text-[11px] text-indigo-900 focus:ring-2 focus:ring-indigo-500 outline-none resize-none font-mono"
+                                            value={neutralWords}
+                                            onChange={(e) => setNeutralWords(e.target.value)}
+                                            placeholder="用于补充不满200字符的空间..."
+                                        />
+                                    </div>
+                                    <div className="space-y-2 text-left">
+                                        <label className="text-[11px] font-black text-red-400 uppercase tracking-wider ml-1 text-left flex items-center gap-1">
+                                            <Icon name="slash" size={10} /> 屏蔽词库
+                                        </label>
+                                        <textarea
+                                            className="w-full h-24 p-3 bg-red-50/30 border border-red-100 rounded-2xl text-[11px] text-red-900 focus:ring-2 focus:ring-red-500 outline-none resize-none font-mono"
+                                            value={excludeWords}
+                                            onChange={(e) => setExcludeWords(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="w-1/2 h-full flex flex-col text-left">
+                            <div className="bg-slate-900 rounded-[2rem] shadow-2xl p-8 text-white h-full flex flex-col relative overflow-hidden border border-slate-800">
+                                <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500 rounded-full -mr-40 -mt-40 opacity-10 blur-[100px]"></div>
+                                
+                                <div className="relative z-10 flex flex-col h-full text-left text-left">
+                                    <div className="flex justify-between items-center mb-6 shrink-0 text-left">
+                                        <div className="space-y-1 text-left text-left">
+                                            <h3 className="text-xl font-black flex items-center gap-3 text-emerald-400 text-left">
+                                                <Icon name="check-circle-2" size={24} />
+                                                清洗结果
+                                            </h3>
+                                            <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest text-left">Optimized Search Terms</p>
+                                        </div>
+                                        
+                                        <button
+                                            onClick={handleCopy}
+                                            disabled={!results || isProcessing}
+                                            className={`px-6 py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition-all transform active:scale-95 shadow-md ${
+                                                copyStatus 
+                                                ? 'bg-emerald-500 text-white' 
+                                                : 'bg-white/10 hover:bg-white/20 text-white border border-white/10 disabled:opacity-5'
+                                            }`}
+                                        >
+                                            {copyStatus ? <Icon name="check-circle-2" size={16} /> : <Icon name="copy" size={16} />}
+                                            {copyStatus ? '已复制' : '复制结果'}
+                                        </button>
+                                    </div>
+
+                                    <div className="flex-1 bg-white/5 backdrop-blur-xl rounded-[1.5rem] p-8 border border-white/5 shadow-inner overflow-y-auto min-h-0 relative mb-6 text-left">
+                                        {results ? (
+                                            <p className="text-2xl leading-relaxed font-bold tracking-tight text-slate-100 selection:bg-indigo-500 text-left pr-4">
+                                                {results}
+                                            </p>
+                                        ) : (
+                                            <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-6 text-center">
+                                                {isProcessing ? (
+                                                    <>
+                                                        <Icon name="refresh-cw" size={64} className="animate-spin opacity-40 text-indigo-400" />
+                                                        <p className="text-sm font-bold uppercase tracking-widest text-slate-400 text-center">正在深度清洗并填充...</p>
+                                                    </>
+                                                ) : hasGenerated ? (
+                                                    <>
+                                                        <Icon name="x-circle" size={64} className="opacity-40 text-amber-500" />
+                                                        <div className="space-y-2 text-center">
+                                                            <p className="text-lg font-bold text-slate-200 text-center">暂无可用关键词</p>
+                                                            <p className="text-xs text-slate-500 max-w-[280px] text-center">输入的词汇及中性词均被过滤。</p>
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Icon name="play-circle" size={64} className="opacity-10 text-white text-center" />
+                                                        <p className="text-sm font-bold uppercase tracking-widest text-slate-500 text-center text-left text-center">点击“开始生成”获取结果</p>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+                                        
+                                        <div className="absolute bottom-4 right-6 pointer-events-none z-20">
+                                            <div className={`px-4 py-1.5 rounded-full text-xs font-black border shadow-lg transition-all ${
+                                                results.length >= 195 ? 'bg-indigo-600 text-white border-indigo-400' : 
+                                                results.length >= 180 ? 'bg-emerald-500 text-white border-emerald-400' : 
+                                                'bg-slate-700 text-slate-300 border-slate-600'
+                                            }`}>
+                                                {results.length} / 200 字符
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4 shrink-0 mt-auto text-center">
+                                        <div className="p-4 bg-white/5 rounded-2xl border border-white/5 flex flex-col items-center justify-center text-center">
+                                            <p className="text-[9px] text-slate-500 uppercase font-black mb-1 text-center">填充逻辑</p>
+                                            <p className="text-xs text-slate-200 font-bold uppercase tracking-tighter text-center">主源优先 + 中性词补位</p>
+                                        </div>
+                                        <button 
+                                            onClick={() => { setRawInput(''); setResults(''); setCopyStatus(false); setHasGenerated(false); }}
+                                            className="p-4 bg-white/5 hover:bg-red-500/10 rounded-2xl border border-white/5 flex flex-col items-center transition-all group justify-center text-center"
+                                        >
+                                            <Icon name="trash-2" size={18} className="text-slate-500 group-hover:text-red-400 mb-1" />
+                                            <p className="text-[10px] text-slate-400 font-black uppercase tracking-tighter text-center">清空重置</p>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    </main>
+
+                    <footer className="bg-white border-t border-slate-200 px-8 py-3 flex items-center justify-between shrink-0">
+                        <div className="flex items-center gap-8 text-[11px] font-black text-slate-400 uppercase tracking-widest text-left text-left">
+                           <div className="flex items-center gap-2 text-left"><Icon name="shield-check" size={14} className="text-indigo-500" /> 中性词智能填充</div>
+                           <div className="flex items-center gap-2 text-left"><Icon name="shield-check" size={14} className="text-indigo-500" /> 最大化利用空间</div>
+                           <div className="flex items-center gap-2 text-left"><Icon name="shield-check" size={14} className="text-indigo-500" /> 200字符精准对齐</div>
+                        </div>
+                        <div className="text-[10px] text-slate-300 font-black italic tracking-widest underline decoration-indigo-200 uppercase">Sage Tech Engine v4.6</div>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
